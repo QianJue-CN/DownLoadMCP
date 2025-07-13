@@ -2,6 +2,8 @@
 
 基于 MCP (Model Context Protocol) 标准的高性能文件下载工具，支持多线程下载、断点续传和会话管理。
 
+**中文版本** | [English Version](README_EN.md)
+
 ## ✨ 功能特性
 
 ### 🚀 核心下载功能
@@ -27,7 +29,7 @@
 
 ```bash
 # 克隆项目
-git clone <repository-url>
+git clone https://github.com/QianJue-CN/DownLoadMCP.git
 cd DownLoadMCP
 
 # 安装依赖
@@ -508,7 +510,15 @@ npm start
 
 ## 📄 许可证
 
-MIT License
+本项目采用 GPL-3.0 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
+
+### 许可证要点
+- ✅ 允许商业使用
+- ✅ 允许修改和分发
+- ✅ 允许私人使用
+- ⚠️ 修改后的代码必须开源
+- ⚠️ 分发时必须包含许可证和版权声明
+- ⚠️ 基于此项目的衍生作品必须使用相同许可证
 
 ---
 
