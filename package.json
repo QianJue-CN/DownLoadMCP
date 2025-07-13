@@ -5,7 +5,9 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:main && npm run build:workers",
+    "build:main": "tsc",
+    "build:workers": "tsc --project tsconfig.worker.json",
     "start": "node dist/index.js",
     "clean": "rimraf dist",
     "prebuild": "npm run clean",

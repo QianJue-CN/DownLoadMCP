@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { Worker } from 'worker_threads';
 import { createWriteStream, promises as fs } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import {
   DownloadConfig,
   DownloadProgress,
@@ -9,6 +9,8 @@ import {
   DownloadStatus,
   DownloadResult
 } from '../types/download.js';
+import { ErrorHandler } from './error-handler.js';
+import { PerformanceMonitor } from '../utils/performance-monitor.js';
 
 export class MultiThreadDownloader extends EventEmitter {
   private config: DownloadConfig;
@@ -23,10 +25,14 @@ export class MultiThreadDownloader extends EventEmitter {
   private isActive: boolean = false;
   private isPaused: boolean = false;
   private isCancelled: boolean = false;
+  private performanceMonitor: PerformanceMonitor;
+  private taskId: string;
 
-  constructor(config: DownloadConfig) {
+  constructor(config: DownloadConfig, taskId?: string) {
     super();
     this.config = config;
+    this.taskId = taskId || `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    this.performanceMonitor = new PerformanceMonitor();
   }
 
   /**
@@ -292,109 +298,93 @@ export class MultiThreadDownloader extends EventEmitter {
    */
   private async createDownloadWorker(segment: DownloadSegment, _index: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const worker = new Worker(`
-        const { parentPort } = require('worker_threads');
-        const fs = require('fs');
+      // 使用独立的Worker文件，移除eval安全隐患
+      const workerPath = join(__dirname, '../workers/download-worker.js');
 
-        parentPort.on('message', async ({ url, headers, segment, timeout }) => {
-          try {
-            // 使用 Node.js 18+ 内置的 fetch API
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout || 30000);
+      // 确保Worker文件存在
+      try {
+        require.resolve(workerPath);
+      } catch (error) {
+        reject(new Error(`Worker file not found: ${workerPath}. Please run 'npm run build:workers' first.`));
+        return;
+      }
 
-            const response = await fetch(url, {
-              headers: {
-                ...headers,
-                'Range': \`bytes=\${segment.start}-\${segment.end}\`
-              },
-              signal: controller.signal
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-              throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
-            }
-
-            const writeStream = fs.createWriteStream(segment.filePath);
-            let downloaded = 0;
-
-            if (!response.body) {
-              throw new Error('Response body is null');
-            }
-
-            const reader = response.body.getReader();
-
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                downloaded += value.length;
-
-                // 确保数据被正确写入
-                await new Promise((writeResolve, writeReject) => {
-                  const success = writeStream.write(value);
-                  if (success) {
-                    writeResolve();
-                  } else {
-                    writeStream.once('drain', () => writeResolve());
-                    writeStream.once('error', writeReject);
-                  }
-                });
-
-                parentPort.postMessage({ type: 'progress', downloaded });
-              }
-
-              // 确保文件被正确关闭
-              await new Promise((endResolve, endReject) => {
-                writeStream.end((error) => {
-                  if (error) {
-                    endReject(error);
-                  } else {
-                    endResolve();
-                  }
-                });
-              });
-
-              parentPort.postMessage({ type: 'completed' });
-            } finally {
-              reader.releaseLock();
-            }
-
-          } catch (error) {
-            parentPort.postMessage({ type: 'error', error: error.message });
-          }
-        });
-      `, { eval: true });
+      const worker = new Worker(workerPath, {
+        workerData: {
+          url: this.config.url,
+          headers: this.config.headers || {},
+          segment: {
+            id: segment.id,
+            start: segment.start,
+            end: segment.end,
+            filePath: segment.filePath
+          },
+          timeout: this.config.timeout || 30000,
+          retryCount: this.config.retryCount || 3
+        }
+      });
 
       this.workers.push(worker);
+
+      // 开始监控分段性能
+      this.performanceMonitor.startSegment(
+        this.taskId,
+        segment.id,
+        segment.end - segment.start + 1
+      );
 
       worker.on('message', (message) => {
         switch (message.type) {
           case 'progress':
             segment.downloaded = message.downloaded;
             this.updateDownloadedSize();
+
+            // 更新性能监控
+            this.performanceMonitor.updateProgress(
+              this.taskId,
+              this.downloadedSize,
+              segment.id,
+              message.downloaded
+            );
             break;
+
           case 'completed':
             segment.status = DownloadStatus.COMPLETED;
+            segment.checksum = message.checksum;
+
+            // 完成分段监控
+            this.performanceMonitor.finishSegment(this.taskId, segment.id);
             resolve();
             break;
+
           case 'error':
             segment.status = DownloadStatus.FAILED;
-            reject(new Error(message.error));
+
+            // 记录错误
+            this.performanceMonitor.recordError(this.taskId, segment.id);
+
+            const error = ErrorHandler.analyzeError(new Error(message.error));
+
+            if (message.retryable && (segment.retryCount || 0) < this.config.retryCount) {
+              // 记录重试
+              this.performanceMonitor.recordRetry(this.taskId, segment.id);
+              segment.retryCount = (segment.retryCount || 0) + 1;
+
+              // 延迟后重试
+              const delay = ErrorHandler.calculateRetryDelay(segment.retryCount);
+              setTimeout(() => {
+                this.createDownloadWorker(segment, _index).then(resolve).catch(reject);
+              }, delay);
+            } else {
+              reject(error);
+            }
             break;
         }
       });
 
-      worker.on('error', reject);
-
-      // 发送下载任务
-      worker.postMessage({
-        url: this.config.url,
-        headers: this.config.headers,
-        segment,
-        timeout: this.config.timeout
+      worker.on('error', (error) => {
+        this.performanceMonitor.recordError(this.taskId, segment.id);
+        reject(ErrorHandler.analyzeError(error));
       });
     });
   }

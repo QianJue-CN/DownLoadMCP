@@ -16,6 +16,9 @@ import { ResumeDownloadTool } from './tools/resume-download.js';
 import { CancelDownloadTool } from './tools/cancel-download.js';
 import { ListDownloadsTool } from './tools/list-downloads.js';
 import { PreRequestTool } from './tools/pre-request.js';
+import { ConfigureAdvancedSessionTool } from './tools/configure-advanced-session.js';
+import { AnalyzePerformanceTool } from './tools/analyze-performance.js';
+import { OptimizeConnectionsTool } from './tools/optimize-connections.js';
 
 class DownloadMCPServer {
   private server: Server;
@@ -29,6 +32,9 @@ class DownloadMCPServer {
     cancelDownload: CancelDownloadTool;
     listDownloads: ListDownloadsTool;
     preRequest: PreRequestTool;
+    configureAdvancedSession: ConfigureAdvancedSessionTool;
+    analyzePerformance: AnalyzePerformanceTool;
+    optimizeConnections: OptimizeConnectionsTool;
   };
 
   constructor() {
@@ -56,7 +62,10 @@ class DownloadMCPServer {
       resumeDownload: new ResumeDownloadTool(this.downloadManager),
       cancelDownload: new CancelDownloadTool(this.downloadManager),
       listDownloads: new ListDownloadsTool(this.downloadManager),
-      preRequest: new PreRequestTool(this.sessionManager)
+      preRequest: new PreRequestTool(this.sessionManager),
+      configureAdvancedSession: new ConfigureAdvancedSessionTool(),
+      analyzePerformance: new AnalyzePerformanceTool(),
+      optimizeConnections: new OptimizeConnectionsTool()
     };
 
     this.setupHandlers();
@@ -68,13 +77,18 @@ class DownloadMCPServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
+          // Core tools
           this.tools.preRequest.getToolDefinition(),
           this.tools.downloadFile.getToolDefinition(),
           this.tools.getDownloadStatus.getToolDefinition(),
           this.tools.pauseDownload.getToolDefinition(),
           this.tools.resumeDownload.getToolDefinition(),
           this.tools.cancelDownload.getToolDefinition(),
-          this.tools.listDownloads.getToolDefinition()
+          this.tools.listDownloads.getToolDefinition(),
+          // Phase 3: Advanced tools
+          this.tools.configureAdvancedSession.getToolDefinition(),
+          this.tools.analyzePerformance.getToolDefinition(),
+          this.tools.optimizeConnections.getToolDefinition()
         ],
       };
     });
@@ -112,6 +126,18 @@ class DownloadMCPServer {
 
           case 'list_downloads':
             result = await this.tools.listDownloads.execute(args);
+            break;
+
+          case 'configure_advanced_session':
+            result = await this.tools.configureAdvancedSession.execute(args);
+            break;
+
+          case 'analyze_performance':
+            result = await this.tools.analyzePerformance.execute(args);
+            break;
+
+          case 'optimize_connections':
+            result = await this.tools.optimizeConnections.execute(args);
             break;
 
           default:

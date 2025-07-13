@@ -26,6 +26,8 @@ export interface DownloadSegment {
   downloaded: number;
   status: DownloadStatus;
   filePath: string;
+  checksum?: string;
+  retryCount?: number;
 }
 
 // 下载进度信息

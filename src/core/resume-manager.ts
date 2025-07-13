@@ -8,6 +8,7 @@ import {
 } from '../types/download.js';
 
 interface ResumeData {
+  version: string;
   taskId: string;
   url: string;
   outputPath: string;
@@ -18,9 +19,12 @@ interface ResumeData {
   etag?: string;
   createdAt: Date;
   updatedAt: Date;
+  userAgent?: string;
+  headers?: Record<string, string>;
 }
 
 export class ResumeManager {
+  private static readonly STATE_VERSION = '2.0';
   private resumeDir: string;
 
   constructor(resumeDir: string = './.download-resume') {
@@ -47,6 +51,7 @@ export class ResumeManager {
     }
 
     const resumeData: ResumeData = {
+      version: ResumeManager.STATE_VERSION,
       taskId: task.id,
       url: task.config.url,
       outputPath: task.config.outputPath,
